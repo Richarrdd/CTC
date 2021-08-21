@@ -1,0 +1,207 @@
+in_dir = getDirectory("Choose input folder");
+out_dir = getDirectory("Choose output folder");
+minimumSize = getNumber("minimum size", 39); 
+maximumSize = getNumber("maximum size", 100000);
+initthreshold = 30;
+smallstep = 7;
+bigstep = 20;
+thresholdvalue = getNumber("threshold value", initthreshold); 
+noisevalue = getNumber("noise threshold", 245);
+red = "R";
+blue = "B";
+green = "G";
+composite = "C";
+redt = red + ".tif"; 
+greent = green + ".tif";
+bluet = blue + ".tif";
+result = "C.tif";
+list = getFileList(in_dir);
+
+setBatchMode(true); 
+for (f=0; f<list.length; f++){
+	process( in_dir, list[ f ], minimumSize, out_dir, f, thresholdvalue);
+} 
+setBatchMode(false);
+
+function process( in_dir, file, minimumSize, out_dir, filenum, thresholdvalue)
+{
+	setOption("ExpandableArrays", true);
+	ctclist = newArray();
+	ctcx = newArray();
+	ctcy = newArray();
+	done=false;
+	roiManager("reset");	
+	run("Close All");
+	run("Clear Results");
+	print("\\Clear");
+
+	if (isOpen("Results")){
+
+		selectWindow("Results");
+		run("Close");
+		}
+
+	list2 = getFileList(in_dir + file);
+	for (k=0; k<list2.length; k++){
+		open(in_dir + file + list2[k]);
+		//subtitle = getTitle();
+		//if((subtitle != red) || (subtitle != (green + ".tif")) || (subtitle != (blue + ".tif")) || (subtitle != (composite + ".tif"))){
+			//selectWindow(subtitle);
+			//close();
+			//}
+	} 
+	print(in_dir + file); 
+	//
+	//
+	selectWindow(bluet);
+	run("Split Channels");
+	selectWindow(bluet + " (blue)");
+	rename(blue);
+	setAutoThreshold();
+	selectWindow(bluet + " (green)");
+	close();
+	selectWindow(bluet + " (red)");
+	close();
+	selectWindow(greent);
+	run("Split Channels");
+	selectWindow(greent + " (green)");
+	rename(green);
+	selectWindow(greent + " (blue)");
+	close();
+	selectWindow(greent + " (red)");
+	close();
+	selectWindow(redt);
+	run("Split Channels");
+	selectWindow(redt + " (red)");
+	rename(red);
+	run("Subtract Background...", "rolling=100");
+	setAutoThreshold("Default dark no-reset");
+	
+	selectWindow(redt + " (green)");
+	close();
+	selectWindow(redt + " (blue)");
+	close();
+	
+	selectWindow(green);
+	run("Duplicate...", "title=greennoise");
+
+	selectWindow("greennoise");
+	run("Invert");
+	setThreshold(0, 255-noisevalue);
+	setOption("BlackBackground", true);
+	run("Threshold...");
+
+	selectWindow(green);
+	if(thresholdvalue == initthreshold){
+		//setAutoThreshold();
+		run("Invert");
+		setThreshold(0, 255-thresholdvalue);
+		setOption("BlackBackground", true);
+		run("Threshold...");
+		}
+	else if(thresholdvalue == initthreshold + smallstep){
+		//run("Brightness/Contrast...");
+		//setMinAndMax(18, 255);
+		//run("Apply LUT");
+		//setAutoThreshold();
+		run("Invert");
+		setThreshold(0, 255-thresholdvalue);
+		setOption("BlackBackground", true);
+		run("Threshold...");
+		}
+	else{
+		run("Invert");
+		setThreshold(0, 255-thresholdvalue);
+		setOption("BlackBackground", true);
+		run("Threshold...");
+		}
+		
+	run("Convert to Mask");
+	
+	selectWindow(blue);
+	run("Convert to Mask");
+	run("Fill Holes");
+	run("Watershed");
+	run("Set Measurements...", "area mean redirect=None decimal=3");
+	run("Set Scale...", "distance=8.3003 known=1 unit=µm");
+	run("Analyze Particles...", "size=" + minimumSize + "-" + maximumSize +" circularity=0.1-1.00 clear include exclude add");
+	
+	numberOfCells = roiManager("count");
+	count = 0;
+	for(i=0; i<(numberOfCells); i++){
+		run("Clear Results");
+		roiManager("Select", i);
+		run("Set Measurements...", "area mean redirect=[G] decimal=3");
+		roiManager("Measure");
+		greenmean = getResult("Mean", 0);
+		run("Clear Results");
+		run("Set Measurements...", "area mean redirect=[R] decimal=3");
+		roiManager("Select", i);
+		roiManager("Measure");
+		redmean = getResult("Mean", 0);
+		run("Clear Results");
+		run("Set Measurements...", "area mean redirect=[greennoise] decimal=3");
+		roiManager("Select", i);
+		roiManager("Measure");
+		noisemean = getResult("Mean", 0);
+		run("Clear Results");
+		roiManager("Select", i);
+		run("Set Scale...", "distance=8.3003 known=1 unit=µm");
+		run("Set Measurements...", "area mean feret's decimal=3");
+		roiManager("Measure");
+		long = getResult("Feret", 0);
+		short = getResult("MinFeret", 0);
+		diameter = sqrt(long * short);
+		run("Clear Results");
+		roiManager("Select", i);
+		run("Make Band...", "band=0.5");
+		roiManager("Update");
+		roiManager("Select", i);
+		run("Set Measurements...", "area mean redirect=[G] decimal=3");
+		roiManager("Measure");
+		greenoutermean = getResult("Mean", 0);
+		//(redmean<10 && greenmean>50 && noisemean<210 && noisemean>110)||(redmean<10 && greenmean>30 && diameter>74.7027)
+		//(redmean<20 && greenmean>50 && noisemean<210 && noisemean>110)||(redmean<10 && greenmean>30 && diameter>74.7027)
+		if((redmean<40 && greenoutermean>40 && noisemean>70)||(redmean<40 && greenmean>200 && noisemean<210 && noisemean>70)||(redmean<30 && greenmean>20 && diameter>9)) {
+			Roi.getCoordinates(x, y);
+			count = count + 1;
+			ctcx[count-1] = x[i];
+			ctcy[count-1] = y[i];
+			ctclist[count-1] = i;
+			}
+		run("Clear Results");
+	}
+	if(count < 18){
+		done=true;
+		}
+	if(done == true){
+		
+		for(h=0;h<ctclist.length;h++){
+			current = ctclist[h];
+			currentx = ctcx[h];
+			currenty = ctcy[h];
+			selectWindow(result);
+			setForegroundColor(255, 0, 0);
+			run("Line Width...", "line=4");
+			makeRectangle(currentx-100, currenty-50, 200, 200);
+			run("Draw", "slice");
+			selectWindow("Results");
+			print((current+1)+"- coordinate="+currentx+","+currenty);
+			}
+		title = file.replace("\\\\","-");
+		selectWindow("Log");  
+		saveAs("Text", out_dir + filenum + "_results.txt");
+		
+		selectWindow(result);
+		saveTitle = out_dir + File.separator +"processed_"+filenum; 
+		saveAs("Tiff", saveTitle);
+		}
+	if(done == false){
+		if(count <= 28){
+			process( in_dir, list[ f ], minimumSize, out_dir, filenum, thresholdvalue + smallstep);
+		}
+		else{
+			process( in_dir, list[ f ], minimumSize, out_dir, filenum, thresholdvalue + bigstep);
+		}
+	}
+}
